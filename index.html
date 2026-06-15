@@ -42,7 +42,7 @@
     <script>
         (function() {
             // ============================================================
-            // STEALTH ROOM v2.0 — IA REFINADA + PROGRESSÃO POR FASES
+            // STEALTH ROOM v3.1 — CHECKPOINT + VIDAS + GAME OVER
             // ============================================================
             const GAME_W = 320;
             const GAME_H = 240;
@@ -64,7 +64,87 @@
             ctx.imageSmoothingEnabled = false;
 
             // ============================================================
-            // AUDIO ENGINE
+            // WORLD DEFINITIONS
+            // ============================================================
+            const WORLDS = [{
+                id: 0,
+                name: 'INSTALAÇÃO',
+                subtitle: 'Corredor Industrial',
+                theme: 'facility',
+                totalPhases: 5,
+                floorColor1: '#121218',
+                floorColor2: '#181820',
+                wallFill: '#2a2a38',
+                wallEdge: '#353548',
+                obstacleTypes: ['crate', 'crate', 'crate', 'table', 'panel', 'divider'],
+                bushChance: 0,
+                ambientLight: 'rgba(20,20,40,0.3)',
+                guardColorBase: '#d04040',
+                difficultyMult: 0.7,
+            }, {
+                id: 1,
+                name: 'BIBLIOTECA',
+                subtitle: 'Labirinto de Estantes',
+                theme: 'library',
+                totalPhases: 5,
+                floorColor1: '#1a1814',
+                floorColor2: '#201e18',
+                wallFill: '#3a3028',
+                wallEdge: '#4a3e34',
+                obstacleTypes: ['bookshelf', 'bookshelf', 'table', 'bookpile', 'bookshelf', 'table'],
+                bushChance: 0,
+                ambientLight: 'rgba(30,25,18,0.4)',
+                guardColorBase: '#c05030',
+                difficultyMult: 0.9,
+            }, {
+                id: 2,
+                name: 'PRISÃO',
+                subtitle: 'Corredores Sombrios',
+                theme: 'prison',
+                totalPhases: 5,
+                floorColor1: '#181818',
+                floorColor2: '#1c1c1c',
+                wallFill: '#2a2a2a',
+                wallEdge: '#3a3a3a',
+                obstacleTypes: ['cell', 'bars', 'wall_seg', 'crate', 'bars', 'cell'],
+                bushChance: 0,
+                ambientLight: 'rgba(15,15,15,0.5)',
+                guardColorBase: '#b04040',
+                difficultyMult: 1.1,
+            }, {
+                id: 3,
+                name: 'CEMITÉRIO',
+                subtitle: 'Névoa Noturna',
+                theme: 'cemetery',
+                totalPhases: 5,
+                floorColor1: '#14181a',
+                floorColor2: '#181c20',
+                wallFill: '#1a2020',
+                wallEdge: '#263030',
+                obstacleTypes: ['tombstone', 'fence', 'mausoleum', 'deadtree', 'tombstone', 'fence'],
+                bushChance: 0.35,
+                ambientLight: 'rgba(10,15,18,0.55)',
+                guardColorBase: '#9050a0',
+                difficultyMult: 1.3,
+            }, {
+                id: 4,
+                name: 'BOSQUE',
+                subtitle: 'Clareira Silvestre',
+                theme: 'forest',
+                totalPhases: 5,
+                floorColor1: '#1a2418',
+                floorColor2: '#1e2a1c',
+                wallFill: '#2a3420',
+                wallEdge: '#3a4428',
+                obstacleTypes: ['tree', 'rock', 'bush_obs', 'log', 'tree', 'rock'],
+                bushChance: 0.6,
+                ambientLight: 'rgba(20,30,15,0.25)',
+                guardColorBase: '#408050',
+                difficultyMult: 1.5,
+            }];
+
+            // ============================================================
+            // AUDIO ENGINE — Com hardening e fallbacks seguros
             // ============================================================
             class AudioEngine {
                 constructor() {
@@ -72,60 +152,80 @@
                     this.initialized = false;
                     this.masterGain = null;
                     this.noiseBuffer = null;
+                    this._checkSupport();
                 }
-                init() {
-                    if (this.initialized) return;
+                _checkSupport() {
                     try {
                         this.ctx = new(window.AudioContext || window.webkitAudioContext)();
+                        this.initialized = true;
+                    } catch (e) {
+                        this.initialized = false;
+                        this.ctx = null;
+                    }
+                }
+                init() {
+                    if (this.initialized && this.ctx) return;
+                    this._checkSupport();
+                    if (this.initialized) {
                         this.masterGain = this.ctx.createGain();
                         this.masterGain.gain.value = 0.38;
                         this.masterGain.connect(this.ctx.destination);
                         this._buildNoiseBuffer();
-                        this.initialized = true;
-                    } catch (e) {}
+                    }
                 }
-                resume() { if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume(); }
+                resume() {
+                    if (this.ctx && this.ctx.state === 'suspended') {
+                        try { this.ctx.resume(); } catch (e) {}
+                    }
+                }
                 _buildNoiseBuffer() {
-                    const len = this.ctx.sampleRate * 0.5;
-                    this.noiseBuffer = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
-                    const data = this.noiseBuffer.getChannelData(0);
-                    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+                    if (!this.ctx) return;
+                    try {
+                        const len = this.ctx.sampleRate * 0.5;
+                        this.noiseBuffer = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+                        const data = this.noiseBuffer.getChannelData(0);
+                        for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+                    } catch (e) { this.noiseBuffer = null; }
                 }
                 play(freq, type, duration, vol = 0.3, glideTo = null, delay = 0) {
                     if (!this.initialized || !this.ctx) return;
                     this.resume();
-                    const t = this.ctx.currentTime + delay;
-                    const osc = this.ctx.createOscillator();
-                    const gain = this.ctx.createGain();
-                    osc.type = type;
-                    osc.frequency.setValueAtTime(Math.max(20, freq), t);
-                    if (glideTo) osc.frequency.linearRampToValueAtTime(Math.max(20, glideTo), t + duration);
-                    gain.gain.setValueAtTime(Math.min(0.6, vol * 0.5), t);
-                    gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
-                    osc.connect(gain);
-                    gain.connect(this.masterGain);
-                    osc.start(t);
-                    osc.stop(t + duration + 0.01);
+                    try {
+                        const t = this.ctx.currentTime + delay;
+                        const osc = this.ctx.createOscillator();
+                        const gain = this.ctx.createGain();
+                        osc.type = type;
+                        osc.frequency.setValueAtTime(Math.max(20, freq), t);
+                        if (glideTo) osc.frequency.linearRampToValueAtTime(Math.max(20, glideTo), t + duration);
+                        gain.gain.setValueAtTime(Math.min(0.6, vol * 0.5), t);
+                        gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+                        osc.connect(gain);
+                        gain.connect(this.masterGain || this.ctx.destination);
+                        osc.start(t);
+                        osc.stop(t + duration + 0.01);
+                    } catch (e) {}
                 }
                 playNoise(duration, vol = 0.08, band = 'all') {
                     if (!this.initialized || !this.ctx || !this.noiseBuffer) return;
                     this.resume();
-                    const t = this.ctx.currentTime;
-                    const source = this.ctx.createBufferSource();
-                    source.buffer = this.noiseBuffer;
-                    const filter = this.ctx.createBiquadFilter();
-                    if (band === 'low') { filter.type = 'lowpass';
-                        filter.frequency.value = 400; } else if (band === 'high') { filter.type = 'highpass';
-                        filter.frequency.value = 1200; } else { filter.type = 'bandpass';
-                        filter.frequency.value = 800; }
-                    const gain = this.ctx.createGain();
-                    gain.gain.setValueAtTime(vol, t);
-                    gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
-                    source.connect(filter);
-                    filter.connect(gain);
-                    gain.connect(this.masterGain);
-                    source.start(t);
-                    source.stop(t + duration);
+                    try {
+                        const t = this.ctx.currentTime;
+                        const source = this.ctx.createBufferSource();
+                        source.buffer = this.noiseBuffer;
+                        const filter = this.ctx.createBiquadFilter();
+                        if (band === 'low') { filter.type = 'lowpass';
+                            filter.frequency.value = 400; } else if (band === 'high') { filter.type = 'highpass';
+                            filter.frequency.value = 1200; } else { filter.type = 'bandpass';
+                            filter.frequency.value = 800; }
+                        const gain = this.ctx.createGain();
+                        gain.gain.setValueAtTime(vol, t);
+                        gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+                        source.connect(filter);
+                        filter.connect(gain);
+                        gain.connect(this.masterGain || this.ctx.destination);
+                        source.start(t);
+                        source.stop(t + duration);
+                    } catch (e) {}
                 }
                 footstep(isRunning = false) {
                     const f = isRunning ? 120 : 70,
@@ -143,29 +243,42 @@
                 chaseSound() { this.play(500, 'sawtooth', 0.3, 0.5, 700);
                     this.play(420, 'square', 0.35, 0.4);
                     this.playNoise(0.2, 0.18, 'all'); }
-                caughtSound() {
-                    this.play(200, 'sawtooth', 0.5, 0.55, 50);
+                caughtSound() { this.play(200, 'sawtooth', 0.5, 0.55, 50);
                     this.play(100, 'square', 0.6, 0.4, 25);
-                    this.playNoise(0.45, 0.3, 'low');
-                }
+                    this.playNoise(0.45, 0.3, 'low'); }
+                lifeLostSound() { this.play(300, 'sawtooth', 0.25, 0.4, 150);
+                    this.play(200, 'square', 0.3, 0.35, 80);
+                    this.playNoise(0.2, 0.15, 'low'); }
+                gameOverSound() { this.play(150, 'sawtooth', 0.6, 0.5, 40);
+                    this.play(80, 'square', 0.7, 0.45, 25);
+                    this.playNoise(0.5, 0.35, 'low'); }
                 victorySound() {
-                    [523, 659, 784, 1047].forEach((f, i) => {
-                        this.play(f, 'triangle', 0.18, 0.42, f * 1.02, i * 0.08);
-                        this.play(f * 1.01, 'sine', 0.1, 0.2, null, i * 0.08 + 0.02);
-                    });
+                    [523, 659, 784, 1047].forEach((f, i) => { this.play(f, 'triangle', 0.18, 0.42, f * 1.02, i * 0.08);
+                        this.play(f * 1.01, 'sine', 0.1, 0.2, null, i * 0.08 + 0.02); });
                 }
-                pickupSound() {
-                    this.play(880, 'triangle', 0.1, 0.42, 1320);
-                    this.play(1320, 'triangle', 0.12, 0.38, 1760);
-                    this.play(1760, 'square', 0.07, 0.2);
+                worldUnlockSound() {
+                    [440, 554, 659, 880, 1108].forEach((f, i) => { this.play(f, 'triangle', 0.22, 0.45, f * 1.03, i * 0.12);
+                        this.play(f * 1.5, 'sine', 0.12, 0.25, null, i * 0.12 + 0.03); });
                 }
                 phaseCompleteSound() {
-                    [660, 880, 1100, 1320].forEach((f, i) => {
-                        this.play(f, 'triangle', 0.15, 0.4, f * 1.03, i * 0.1);
-                    });
+                    this.play(660, 'triangle', 0.12, 0.4, 880, 0);
+                    this.play(880, 'triangle', 0.15, 0.4, 1100, 0.08);
+                    this.play(1100, 'square', 0.10, 0.3, null, 0.16);
+                    this.playNoise(0.08, 0.06, 'high');
                 }
+                pickupSound() { this.play(880, 'triangle', 0.1, 0.42, 1320);
+                    this.play(1320, 'triangle', 0.12, 0.38, 1760);
+                    this.play(1760, 'square', 0.07, 0.2); }
+                camouflageSound() { this.play(200, 'sine', 0.15, 0.2, 150);
+                    this.playNoise(0.12, 0.04, 'low'); }
             }
             const audio = new AudioEngine();
+
+            function safeAudio(methodName, ...args) {
+                if (!audio || !audio.initialized) return;
+                if (typeof audio[methodName] !== 'function') return;
+                try { audio[methodName](...args); } catch (e) {}
+            }
 
             // ============================================================
             // PARTICLE SYSTEM
@@ -196,20 +309,24 @@
             const particles = [];
 
             function spawnParticles(x, y, count, color, speed = 30, life = 0.4, size = 1, gravity = 0) {
-                for (let i = 0; i < count; i++) {
-                    const a = Math.random() * Math.PI * 2;
-                    const s = speed * (0.3 + Math.random() * 0.7);
-                    particles.push(new Particle(x, y, Math.cos(a) * s, Math.sin(a) * s, life * (0.5 + Math.random() * 0.5),
-                        color, size, gravity));
-                }
+                try {
+                    for (let i = 0; i < count; i++) {
+                        const a = Math.random() * Math.PI * 2;
+                        const s = speed * (0.3 + Math.random() * 0.7);
+                        particles.push(new Particle(x, y, Math.cos(a) * s, Math.sin(a) * s, life * (0.5 + Math.random() * 0.5),
+                            color, size, gravity));
+                    }
+                } catch (e) {}
             }
 
             // ============================================================
             // GAME STATE
             // ============================================================
-            const STATE = { TITLE: 'title', PLAYING: 'playing', CAUGHT: 'caught', WIN: 'win' };
+            const STATE = { TITLE: 'title', PLAYING: 'playing', CAUGHT: 'caught', WIN: 'win', WORLD_TRANSITION: 'world_trans',
+                GAME_OVER: 'game_over' };
             let gameState = STATE.TITLE;
-            let currentPhase = 1;
+            let currentWorldIndex = 0;
+            let currentPhaseInWorld = 1;
             let detectionMeter = 0;
             let detectionFlash = 0;
             let screenShakeX = 0,
@@ -220,11 +337,18 @@
             let freezeTimer = 0;
             let winTimer = 0;
             let titlePulse = 0;
-            let caughtTimer = 0;
+            let worldTransTimer = 0;
+            let worldTransAlpha = 0;
+            let gameOverTimer = 0;
+
+            // NOVO: Sistema de vidas
+            const MAX_LIVES = 3;
+            let lives = MAX_LIVES;
 
             let player = null;
             let guards = [];
             let obstacles = [];
+            let bushes = [];
             let items = [];
             let exitZone = null;
             let roomWalls = null;
@@ -234,8 +358,12 @@
             let spacePressed = false;
             let rPressed = false;
 
+            function getCurrentWorld() { return WORLDS[currentWorldIndex]; }
+
+            function getWorldPhaseCount() { return getCurrentWorld().totalPhases; }
+
             // ============================================================
-            // NAVIGATION GRID (para pathfinding dos guardas)
+            // NAVIGATION GRID
             // ============================================================
             const NAV_CELL = 12;
             const NAV_COLS = Math.floor(GAME_W / NAV_CELL);
@@ -253,10 +381,7 @@
                         const cy = row * NAV_CELL + NAV_CELL / 2;
                         let blocked = false;
                         for (const b of blockers) {
-                            if (cx >= b.x && cx <= b.x + b.w && cy >= b.y && cy <= b.y + b.h) {
-                                blocked = true;
-                                break;
-                            }
+                            if (cx >= b.x && cx <= b.x + b.w && cy >= b.y && cy <= b.y + b.h) { blocked = true; break; }
                         }
                         navGrid[row][col] = blocked ? 1 : 0;
                     }
@@ -265,16 +390,27 @@
             }
 
             function worldToNav(wx, wy) {
-                const col = Math.floor(wx / NAV_CELL);
-                const row = Math.floor(wy / NAV_CELL);
                 return {
-                    col: Math.max(0, Math.min(NAV_COLS - 1, col)),
-                    row: Math.max(0, Math.min(NAV_ROWS - 1, row))
+                    col: Math.max(0, Math.min(NAV_COLS - 1, Math.floor(wx / NAV_CELL))),
+                    row: Math.max(0, Math.min(NAV_ROWS - 1, Math.floor(wy / NAV_CELL)))
                 };
             }
 
-            function navToWorld(col, row) {
-                return { x: col * NAV_CELL + NAV_CELL / 2, y: row * NAV_CELL + NAV_CELL / 2 };
+            function navToWorld(col, row) { return { x: col * NAV_CELL + NAV_CELL / 2, y: row * NAV_CELL + NAV_CELL / 2 }; }
+
+            function findNearestFree(col, row) {
+                for (let r = 1; r < 8; r++) {
+                    for (let dc = -r; dc <= r; dc++) {
+                        for (let dr = -r; dr <= r; dr++) {
+                            if (Math.abs(dc) !== r && Math.abs(dr) !== r) continue;
+                            const nc = col + dc,
+                                nr = row + dr;
+                            if (nc >= 0 && nc < NAV_COLS && nr >= 0 && nr < NAV_ROWS && navGrid[nr][nc] === 0) return { col: nc,
+                                row: nr };
+                        }
+                    }
+                }
+                return null;
             }
 
             function findPath(startWX, startWY, endWX, endWY) {
@@ -282,32 +418,27 @@
                 const start = worldToNav(startWX, startWY);
                 const end = worldToNav(endWX, endWY);
                 if (start.col === end.col && start.row === end.row) return [navToWorld(end.col, end.row)];
-                if (navGrid[end.row] && navGrid[end.row][end.col] === 1) {
-                    const nearest = findNearestFree(end.col, end.row);
-                    if (!nearest) return null;
-                    end.col = nearest.col;
-                    end.row = nearest.row;
-                }
-                if (navGrid[start.row] && navGrid[start.row][start.col] === 1) {
-                    const nearest = findNearestFree(start.col, start.row);
-                    if (!nearest) return null;
-                    start.col = nearest.col;
-                    start.row = nearest.row;
-                }
+                if (navGrid[end.row] && navGrid[end.row][end.col] === 1) { const n = findNearestFree(end.col, end.row); if (!n)
+                        return null;
+                    end.col = n.col;
+                    end.row = n.row; }
+                if (navGrid[start.row] && navGrid[start.row][start.col] === 1) { const n = findNearestFree(start.col, start
+                        .row); if (!n) return null;
+                    start.col = n.col;
+                    start.row = n.row; }
                 const visited = new Array(NAV_ROWS).fill(null).map(() => new Array(NAV_COLS).fill(false));
                 const parent = new Array(NAV_ROWS).fill(null).map(() => new Array(NAV_COLS).fill(null));
                 const queue = [{ col: start.col, row: start.row }];
                 visited[start.row][start.col] = true;
-                const dirs = [
-                    { dc: 0, dr: -1 }, { dc: 1, dr: 0 }, { dc: 0, dr: 1 }, { dc: -1, dr: 0 },
-                    { dc: 1, dr: -1 }, { dc: 1, dr: 1 }, { dc: -1, dr: 1 }, { dc: -1, dr: -1 }
+                const dirs = [{ dc: 0, dr: -1 }, { dc: 1, dr: 0 }, { dc: 0, dr: 1 }, { dc: -1, dr: 0 }, { dc: 1, dr: -1 },
+                    { dc: 1, dr: 1 }, { dc: -1, dr: 1 }, { dc: -1, dr: -1 }
                 ];
                 let found = false;
                 while (queue.length > 0 && !found) {
                     const cur = queue.shift();
                     for (const d of dirs) {
-                        const nc = cur.col + d.dc;
-                        const nr = cur.row + d.dr;
+                        const nc = cur.col + d.dc,
+                            nr = cur.row + d.dr;
                         if (nc >= 0 && nc < NAV_COLS && nr >= 0 && nr < NAV_ROWS && !visited[nr][nc] && navGrid[nr][nc] ===
                             0) {
                             visited[nr][nc] = true;
@@ -320,37 +451,17 @@
                 if (!found) return null;
                 const path = [];
                 let cur = { col: end.col, row: end.row };
-                while (cur) {
-                    path.unshift(navToWorld(cur.col, cur.row));
-                    cur = parent[cur.row][cur.col];
-                }
+                while (cur) { path.unshift(navToWorld(cur.col, cur.row));
+                    cur = parent[cur.row][cur.col]; }
                 if (path.length <= 1) return [navToWorld(end.col, end.row)];
                 const simplified = [path[0]];
                 for (let i = 1; i < path.length - 1; i++) {
                     const prev = simplified[simplified.length - 1];
-                    const dx1 = path[i].x - prev.x;
-                    const dy1 = path[i].y - prev.y;
-                    const dx2 = path[i + 1].x - path[i].x;
-                    const dy2 = path[i + 1].y - path[i].y;
-                    if (Math.abs(dx1 - dx2) > 1 || Math.abs(dy1 - dy2) > 1) simplified.push(path[i]);
+                    if (Math.abs(path[i].x - prev.x - (path[i + 1].x - path[i].x)) > 1 || Math.abs(path[i].y - prev.y - (path[
+                            i + 1].y - path[i].y)) > 1) simplified.push(path[i]);
                 }
                 simplified.push(path[path.length - 1]);
                 return simplified;
-            }
-
-            function findNearestFree(col, row) {
-                for (let r = 1; r < 8; r++) {
-                    for (let dc = -r; dc <= r; dc++) {
-                        for (let dr = -r; dr <= r; dr++) {
-                            if (Math.abs(dc) !== r && Math.abs(dr) !== r) continue;
-                            const nc = col + dc,
-                                nr = row + dr;
-                            if (nc >= 0 && nc < NAV_COLS && nr >= 0 && nr < NAV_ROWS && navGrid[nr][nc] === 0)
-                                return { col: nc, row: nr };
-                        }
-                    }
-                }
-                return null;
             }
 
             // ============================================================
@@ -377,7 +488,9 @@
                     residualVx: 0,
                     residualVy: 0,
                     headBobPhase: 0,
-                    hitboxScale: 0.85
+                    hitboxScale: 0.85,
+                    camouflaged: false,
+                    camouflageTimer: 0,
                 };
             }
 
@@ -429,9 +542,27 @@
                     pillar: { fill: '#48485a', highlight: '#56566c', shadow: '#2e2e3e', accent: '#606076' },
                     shelf: { fill: '#3d3848', highlight: '#4e495a', shadow: '#282435', accent: '#5a5568' },
                     wall_seg: { fill: '#2a2a40', highlight: '#353550', shadow: '#1a1a28', accent: '#3e3e55' },
+                    panel: { fill: '#4a4850', highlight: '#5a5860', shadow: '#2a2830', accent: '#6a6870' },
+                    divider: { fill: '#3a3844', highlight: '#4a4856', shadow: '#22202a', accent: '#565260' },
+                    bookshelf: { fill: '#5a4030', highlight: '#6b503e', shadow: '#3a2818', accent: '#7a5a44' },
+                    bookpile: { fill: '#4a3828', highlight: '#5a4836', shadow: '#2a1808', accent: '#6a5844' },
+                    cell: { fill: '#3a3a3a', highlight: '#4a4a4a', shadow: '#1a1a1a', accent: '#555555' },
+                    bars: { fill: '#2a2a2a', highlight: '#444444', shadow: '#111111', accent: '#555555' },
+                    tombstone: { fill: '#3a3a3e', highlight: '#4e4e52', shadow: '#1e1e22', accent: '#5a5a60' },
+                    fence: { fill: '#2a2a28', highlight: '#3e3e3a', shadow: '#181816', accent: '#4a4a44' },
+                    mausoleum: { fill: '#383840', highlight: '#46464e', shadow: '#1c1c22', accent: '#52525a' },
+                    deadtree: { fill: '#2a2824', highlight: '#3a3832', shadow: '#181612', accent: '#444238' },
+                    tree: { fill: '#2a3a20', highlight: '#3a4e2c', shadow: '#162010', accent: '#4a5e38' },
+                    rock: { fill: '#4a4a42', highlight: '#5a5a50', shadow: '#2a2a22', accent: '#6a6a5e' },
+                    bush_obs: { fill: '#2a3a1a', highlight: '#3a4e28', shadow: '#182010', accent: '#4a5e34' },
+                    log: { fill: '#3a3024', highlight: '#4a3e30', shadow: '#1e180c', accent: '#5a4e3c' },
                 };
                 const p = palettes[type] || palettes['crate'];
                 return { x, y, w, h, type, ...p };
+            }
+
+            function createBush(x, y, w, h) {
+                return { x, y, w, h, type: 'bush' };
             }
 
             // ============================================================
@@ -452,10 +583,10 @@
             }
 
             function distBetween(a, b) {
-                const ax = a.x + (a.w || 0) / 2;
-                const ay = a.y + (a.h || 0) / 2;
-                const bx = b.x + (b.w || 0) / 2;
-                const by = b.y + (b.h || 0) / 2;
+                const ax = a.x + (a.w || 0) / 2,
+                    ay = a.y + (a.h || 0) / 2;
+                const bx = b.x + (b.w || 0) / 2,
+                    by = b.y + (b.h || 0) / 2;
                 return Math.hypot(ax - bx, ay - by);
             }
 
@@ -467,8 +598,16 @@
                 return Math.abs(a.x - b.x) < (aw + bw) / 2 && Math.abs(a.y - b.y) < (ah + bh) / 2;
             }
 
+            function isPlayerInBush() {
+                if (!player || bushes.length === 0) return false;
+                for (const b of bushes) {
+                    if (pointInRect(player.x, player.y, b, 2)) return true;
+                }
+                return false;
+            }
+
             // ============================================================
-            // PROCEDURAL ROOM GENERATION — COM PROGRESSÃO DE FASES
+            // BLOCKERS
             // ============================================================
             function getAllBlockers() {
                 const blockers = [...obstacles];
@@ -479,7 +618,11 @@
                 return blockers;
             }
 
-            function generateRoom(phase = 1) {
+            // ============================================================
+            // PROCEDURAL ROOM GENERATION
+            // ============================================================
+            function generateRoom(worldIndex, phaseInWorld) {
+                const world = WORLDS[worldIndex];
                 const rng = Math.random;
                 const wallThickness = 10;
                 roomWalls = {
@@ -494,16 +637,15 @@
                 const interiorW = GAME_W - wallThickness * 2 - 10;
                 const interiorH = GAME_H - wallThickness * 2 - 10;
 
-                const phaseDifficulty = Math.min(10, phase);
-                const numGuards = phaseDifficulty <= 2 ? 1 : phaseDifficulty <= 4 ? 2 : phaseDifficulty <= 7 ? 2 + Math.floor((
-                    phaseDifficulty - 4) / 2) : 3 + Math.floor((phaseDifficulty - 7) / 2);
+                const phaseDifficulty = Math.min(world.totalPhases, phaseInWorld);
+                const numGuards = phaseDifficulty <= 2 ? 1 : phaseDifficulty <= 3 ? 2 : phaseDifficulty <= 4 ? 2 + Math.floor(
+                    (phaseDifficulty - 3) / 2) : 3 + Math.floor((phaseDifficulty - 4) / 2);
                 const numItems = Math.min(5, 1 + Math.floor((phaseDifficulty - 1) / 2));
-                const obstacleDensity = 0.25 + phaseDifficulty * 0.04;
-                const mapComplexity = Math.min(1, 0.3 + phaseDifficulty * 0.08);
+                const obstacleDensity = 0.2 + phaseDifficulty * 0.05 + world.difficultyMult * 0.03;
+                const mapComplexity = Math.min(1, 0.25 + phaseDifficulty * 0.08 + world.difficultyMult * 0.05);
 
-                // Obstáculos — clusters + paredes internas
                 obstacles = [];
-                const obsTypes = ['crate', 'crate', 'crate', 'table', 'pillar', 'shelf'];
+                const obsTypes = world.obstacleTypes;
                 const placedObs = [];
                 const numClusters = randomInt(2 + Math.floor(mapComplexity * 3), 4 + Math.floor(mapComplexity * 4));
                 const targetObsCount = Math.floor((interiorW * interiorH) / 1800 * obstacleDensity * 8);
@@ -534,7 +676,6 @@
                         placedObs.push(cand);
                     }
                 }
-                // Obstáculos extras
                 while (placedObs.length < targetObsCount && placedObs.length < 25) {
                     const type = obsTypes[randomInt(0, obsTypes.length - 1)];
                     const ow = randomInt(10, 28);
@@ -550,28 +691,29 @@
                     if (tooClose) continue;
                     placedObs.push(cand);
                 }
-                // Paredes internas para fases avançadas
-                if (phaseDifficulty >= 3) {
-                    const numWalls = randomInt(0, Math.floor(mapComplexity * 3));
-                    for (let i = 0; i < numWalls; i++) {
-                        const horizontal = rng() > 0.5;
-                        const ww = horizontal ? randomInt(20, 60) : 6;
-                        const wh = horizontal ? 6 : randomInt(20, 50);
-                        const wx = interiorX + rng() * (interiorW - ww);
-                        const wy = interiorY + rng() * (interiorH - wh);
-                        const cand = createObstacle(Math.floor(wx), Math.floor(wy), ww, wh, 'wall_seg');
-                        let valid = true;
-                        for (const w of wallRects) { if (rectsOverlap(cand, w, 3)) { valid = false; break; } }
-                        if (!valid) continue;
-                        let tooClose = false;
-                        for (const o of placedObs) { if (rectsOverlap(cand, o, 5)) { tooClose = true; break; } }
-                        if (tooClose) continue;
-                        placedObs.push(cand);
-                    }
-                }
                 obstacles = placedObs;
 
-                // Saída
+                bushes = [];
+                if (world.bushChance > 0) {
+                    const numBushes = Math.floor((interiorW * interiorH) / 2000 * world.bushChance * 6);
+                    for (let i = 0; i < numBushes; i++) {
+                        const bw = randomInt(14, 28);
+                        const bh = randomInt(10, 20);
+                        const bx = interiorX + rng() * (interiorW - bw);
+                        const by = interiorY + rng() * (interiorH - bh);
+                        const bush = createBush(Math.floor(bx), Math.floor(by), bw, bh);
+                        let valid = true;
+                        for (const w of wallRects) { if (rectsOverlap(bush, w, 3)) { valid = false; break; } }
+                        if (!valid) continue;
+                        let tooClose = false;
+                        for (const o of obstacles) { if (rectsOverlap(bush, o, 4)) { tooClose = true; break; } }
+                        if (tooClose) continue;
+                        for (const b2 of bushes) { if (rectsOverlap(bush, b2, 5)) { tooClose = true; break; } }
+                        if (tooClose) continue;
+                        bushes.push(bush);
+                    }
+                }
+
                 const exitWallChoice = randomInt(0, 3);
                 let exitW = 14,
                     exitH = 8;
@@ -602,7 +744,6 @@
                 }
                 exitZone = { x: Math.floor(exitX), y: Math.floor(exitY), w: exitW, h: exitH, wall: chosenWall };
 
-                // Itens
                 items = [];
                 const itemSize = 7;
                 for (let i = 0; i < numItems; i++) {
@@ -619,7 +760,8 @@
                         for (const obs of obstacles) { if (rectsOverlap(ir, obs, 7)) { blocked = true; break; } }
                         for (const w of wallRects) { if (rectsOverlap(ir, w, 4)) { blocked = true; break; } }
                         let tooCloseItem = false;
-                        for (const it of items) { if (Math.hypot(ix - it.x, iy - it.y) < 30) { tooCloseItem = true; break; } }
+                        for (const it of items) { if (Math.hypot(ix - it.x, iy - it.y) < 30) { tooCloseItem = true;
+                                break; } }
                         if (!blocked && !tooCloseItem) valid = true;
                         attempts++;
                     }
@@ -629,7 +771,6 @@
                             Math.PI * 2 });
                 }
 
-                // Player spawn
                 let spawnX, spawnY;
                 let spawnValid = false;
                 let spawnAttempts = 0;
@@ -651,8 +792,8 @@
                     spawnY = interiorY + 22; }
                 player = createPlayer(Math.floor(spawnX), Math.floor(spawnY));
 
-                // Guardas
                 guards = [];
+                const diffMult = world.difficultyMult;
                 for (let g = 0; g < numGuards; g++) {
                     const numWaypoints = randomInt(3, 5 + Math.floor(mapComplexity * 2));
                     const patrolPath = [];
@@ -686,13 +827,12 @@
                     guard.patrolWaitTimer = 0.3 + g * 0.5;
                     guard.lookSweepTimer = rng() * 5;
                     guard.patrolVariance = rng() * 0.5;
-                    guard.speed = 34 + phaseDifficulty * 1.5;
-                    guard.chaseSpeed = 65 + phaseDifficulty * 3;
+                    guard.speed = (34 + phaseDifficulty * 1.5) * diffMult;
+                    guard.chaseSpeed = (65 + phaseDifficulty * 3) * diffMult;
                     guard.visionRange = 95 + phaseDifficulty * 3;
                     guards.push(guard);
                 }
 
-                // Reset
                 particles.length = 0;
                 detectionMeter = 0;
                 detectionFlash = 0;
@@ -700,9 +840,13 @@
                 shakeDuration = 0;
                 freezeTimer = 0;
                 winTimer = 0;
-                caughtTimer = 0;
+                worldTransTimer = 0;
+                worldTransAlpha = 0;
+                gameOverTimer = 0;
                 globalTime = 0;
                 navGridDirty = true;
+                if (player) { player.camouflaged = false;
+                    player.camouflageTimer = 0; }
             }
 
             // ============================================================
@@ -710,6 +854,12 @@
             // ============================================================
             function getPlayerVisibilityByGuard(guard) {
                 if (!player || !guard) return 0;
+                if (player.camouflaged) {
+                    const distToGuard = Math.hypot(player.x - guard.x, player.y - guard.y);
+                    if (guard.state === 'investigate' && distToGuard < 35) return 0.2;
+                    if (guard.state === 'chase' && distToGuard < 40) return 0.35;
+                    return 0;
+                }
                 const px = player.x,
                     py = player.y;
                 const gx = guard.x,
@@ -732,6 +882,7 @@
                         sy = gy + dy * t;
                     let blk = false;
                     for (const obs of obstacles) { if (pointInRect(sx, sy, obs, 1)) { blk = true; break; } }
+                    for (const b of bushes) { if (pointInRect(sx, sy, b, 0)) { blk = true; break; } }
                     if (sx < roomWalls.left.x + roomWalls.left.w + 1 || sx > roomWalls.right.x - 1 || sy < roomWalls.top.y +
                         roomWalls.top.h + 1 || sy > roomWalls.bottom.y - 1) blk = true;
                     if (blk) { if (i <= 3) occluded = true;
@@ -751,11 +902,10 @@
 
             function canAnyGuardHearPlayer() {
                 if (!player) return false;
+                if (player.camouflaged && !player.isRunning) return false;
                 const noiseR = player.isRunning ? player.runNoiseRadius : (player.speed > 10 ? player.noiseRadius : 0);
                 if (noiseR <= 0) return false;
-                for (const g of guards) {
-                    if (Math.hypot(g.x - player.x, g.y - player.y) < noiseR) return true;
-                }
+                for (const g of guards) { if (Math.hypot(g.x - player.x, g.y - player.y) < noiseR) return true; }
                 return false;
             }
 
@@ -789,7 +939,7 @@
             }
 
             // ============================================================
-            // GUARD AI — MÁQUINA DE ESTADOS REFINADA COM PATHFINDING
+            // GUARD AI
             // ============================================================
             function updateGuardAI(guard, dt) {
                 if (gameState !== STATE.PLAYING) return;
@@ -799,7 +949,6 @@
                 const canHear = canAnyGuardHearPlayer() && player.isRunning;
                 const distToPlayer = Math.hypot(guard.x - player.x, guard.y - player.y);
 
-                // Detection meter compartilhado
                 if (visibility > 0.15) {
                     const fillRate = visibility > 0.7 ? 2.8 : (visibility > 0.35 ? 1.4 : 0.6);
                     detectionMeter = Math.min(1, detectionMeter + fillRate * dt);
@@ -844,7 +993,6 @@
                         break;
                 }
 
-                // Suavizar ângulo
                 let ad = guard.targetAngle - guard.facingAngle;
                 while (ad > Math.PI) ad -= Math.PI * 2;
                 while (ad < -Math.PI) ad += Math.PI * 2;
@@ -860,7 +1008,7 @@
                 guard.state = newState;
                 switch (newState) {
                     case 'suspicious':
-                        audio.suspiciousSound();
+                        safeAudio('suspiciousSound');
                         guard.lookSweepTimer = 0;
                         break;
                     case 'investigate':
@@ -868,7 +1016,7 @@
                         guard.investigationTarget = guard.lastKnownPlayerPos || { x: guard.x, y: guard.y };
                         guard.currentPath = null;
                         guard.lookSweepTimer = 0;
-                        if (guard.state !== 'suspicious') audio.alertSound();
+                        if (guard.state !== 'suspicious') safeAudio('alertSound');
                         break;
                     case 'chase':
                         guard.chaseTimer = 0;
@@ -877,7 +1025,7 @@
                         guard.stuckTimer = 0;
                         guard.stuckCheckPos = { x: guard.x, y: guard.y };
                         detectionMeter = Math.max(detectionMeter, 0.85);
-                        audio.chaseSound();
+                        safeAudio('chaseSound');
                         spawnParticles(guard.x, guard.y, 10, '#ff4444', 60, 0.55, 2);
                         freezeTimer = Math.max(freezeTimer, 0.06);
                         shakeIntensity = Math.max(shakeIntensity, 3);
@@ -914,10 +1062,8 @@
                     guard.lookSweepOffset = Math.sin(guard.lookSweepTimer * 2.8 + guard.patrolVariance) * 0.5;
                     guard.targetAngle = guard.facingAngle + guard.lookSweepOffset * 0.7;
                     guard.idleLookTimer += dt;
-                    if (guard.idleLookTimer > 2.5 + guard.patrolVariance * 3) {
-                        guard.idleLookTimer = 0;
-                        guard.idleLookTarget = guard.facingAngle + (Math.random() - 0.5) * 1.2;
-                    }
+                    if (guard.idleLookTimer > 2.5 + guard.patrolVariance * 3) { guard.idleLookTimer = 0;
+                        guard.idleLookTarget = guard.facingAngle + (Math.random() - 0.5) * 1.2; }
                     guard.targetAngle += (guard.idleLookTarget - guard.targetAngle) * 0.3;
                     return;
                 }
@@ -955,9 +1101,7 @@
                         guard.x += (dx / Math.hypot(dx, dy)) * spd * dt;
                         guard.y += (dy / Math.hypot(dx, dy)) * spd * dt;
                     }
-                } else {
-                    guard.targetAngle += guard.lookSweepOffset * 0.5 * dt;
-                }
+                } else { guard.targetAngle += guard.lookSweepOffset * 0.5 * dt; }
                 const res = resolveCollision(guard, getAllBlockers());
                 guard.x = res.x;
                 guard.y = res.y;
@@ -983,10 +1127,11 @@
                     guard.targetAngle += guard.lookSweepOffset * 0.8;
                     guard.investigationTimer -= dt * 0.8;
                     if (Math.random() < 0.02) {
-                        const nearby = obstacles.filter(o => distBetween(guard, o) < 40);
+                        const allObs = [...obstacles, ...bushes];
+                        const nearby = allObs.filter(o => distBetween(guard, o) < 40);
                         if (nearby.length > 0) {
                             const ch = nearby[Math.floor(Math.random() * nearby.length)];
-                            guard.investigationTarget = { x: ch.x + ch.w / 2, y: ch.y + ch.h / 2 };
+                            guard.investigationTarget = { x: ch.x + (ch.w || 0) / 2, y: ch.y + (ch.h || 0) / 2 };
                         }
                     }
                 } else {
@@ -1002,25 +1147,19 @@
             function updateChase(guard, dt) {
                 guard.chaseTimer += dt;
                 guard.pathRecalcTimer += dt;
-                // Verificar se está travado
-                if (guard.stuckCheckPos && Math.hypot(guard.x - guard.stuckCheckPos.x, guard.y - guard.stuckCheckPos.y) < 2) {
+                if (guard.stuckCheckPos && Math.hypot(guard.x - guard.stuckCheckPos.x, guard.y - guard.stuckCheckPos.y) < 2)
                     guard.stuckTimer += dt;
-                } else {
-                    guard.stuckTimer = 0;
-                    guard.stuckCheckPos = { x: guard.x, y: guard.y };
-                }
-                // Recalcular caminho periodicamente ou se travado
+                else { guard.stuckTimer = 0;
+                    guard.stuckCheckPos = { x: guard.x, y: guard.y }; }
                 if (guard.pathRecalcTimer > 0.4 || guard.stuckTimer > 0.8 || !guard.currentPath || guard.currentPath.length ===
                     0) {
                     guard.pathRecalcTimer = 0;
                     guard.currentPath = findPath(guard.x, guard.y, player.x, player.y);
                     guard.pathTarget = guard.currentPath && guard.currentPath.length > 1 ? guard.currentPath[1] : (guard
                         .currentPath && guard.currentPath.length === 1 ? guard.currentPath[0] : null);
-                    if (guard.stuckTimer > 0.8) {
-                        guard.stuckTimer = 0;
+                    if (guard.stuckTimer > 0.8) { guard.stuckTimer = 0;
                         guard.currentPath = null;
-                        guard.pathTarget = { x: player.x, y: player.y };
-                    }
+                        guard.pathTarget = { x: player.x, y: player.y }; }
                 }
                 const target = guard.pathTarget || { x: player.x, y: player.y };
                 const dx = target.x - guard.x,
@@ -1028,15 +1167,10 @@
                 const dist = Math.sqrt(dx * dx + dy * dy);
                 guard.targetAngle = Math.atan2(dy, dx);
                 const spd = guard.chaseSpeed;
-                if (dist > 0.5) {
-                    guard.x += (dx / dist) * spd * dt;
-                    guard.y += (dy / dist) * spd * dt;
-                }
-                // Se chegou no waypoint, avançar no path
-                if (dist < 5 && guard.currentPath && guard.currentPath.length > 1) {
-                    guard.currentPath.shift();
-                    guard.pathTarget = guard.currentPath.length > 0 ? guard.currentPath[0] : null;
-                }
+                if (dist > 0.5) { guard.x += (dx / dist) * spd * dt;
+                    guard.y += (dy / dist) * spd * dt; }
+                if (dist < 5 && guard.currentPath && guard.currentPath.length > 1) { guard.currentPath.shift();
+                    guard.pathTarget = guard.currentPath.length > 0 ? guard.currentPath[0] : null; }
                 const res = resolveCollision(guard, getAllBlockers());
                 guard.x = res.x;
                 guard.y = res.y;
@@ -1056,9 +1190,7 @@
                         guard.x += (dx / dist) * spd * dt;
                         guard.y += (dy / dist) * spd * dt;
                     }
-                } else {
-                    guard.targetAngle += guard.lookSweepOffset * 0.6 * dt;
-                }
+                } else { guard.targetAngle += guard.lookSweepOffset * 0.6 * dt; }
                 const res = resolveCollision(guard, getAllBlockers());
                 guard.x = res.x;
                 guard.y = res.y;
@@ -1067,58 +1199,112 @@
             function checkPhysicalCapture() {
                 if (gameState !== STATE.PLAYING) return;
                 for (const guard of guards) {
-                    if (guard.state === 'chase' && entitiesOverlap(player, guard)) {
-                        triggerCaught();
-                        return;
-                    }
+                    if (guard.state === 'chase' && entitiesOverlap(player, guard)) { triggerCaught(); return; }
                 }
             }
 
             function triggerCaught() {
                 gameState = STATE.CAUGHT;
                 freezeTimer = 0.5;
-                caughtTimer = 0;
                 shakeIntensity = 8;
                 shakeDuration = 0.6;
                 detectionFlash = 1.0;
                 detectionMeter = 1;
-                audio.caughtSound();
+                safeAudio('caughtSound');
                 spawnParticles(player.x, player.y, 40, '#ff2222', 90, 0.7, 2.5, 25);
                 spawnParticles(player.x, player.y, 25, '#ff8800', 65, 0.55, 1.8, 15);
-                for (const guard of guards) {
-                    if (guard.state === 'chase') {
-                        spawnParticles(guard.x, guard.y, 20, '#ff5544', 60, 0.6, 2, 20);
-                    }
+                for (const guard of guards) { if (guard.state === 'chase') spawnParticles(guard.x, guard.y, 20, '#ff5544', 60,
+                        0.6, 2, 20); }
+                // Não decrementa vidas aqui — será feito no tratamento pós-congelamento
+            }
+
+            function applyDeathPenalty() {
+                lives--;
+                safeAudio('lifeLostSound');
+                if (lives <= 0) {
+                    // Game Over total
+                    gameState = STATE.GAME_OVER;
+                    gameOverTimer = 2.5;
+                    freezeTimer = 0;
+                    safeAudio('gameOverSound');
+                } else {
+                    // Reiniciar checkpoint do mundo atual (fase 1)
+                    resetToWorldCheckpoint();
                 }
             }
 
-            function triggerWin() {
-                gameState = STATE.WIN;
-                winTimer = 1.5;
-                shakeIntensity = 3;
-                shakeDuration = 0.45;
-                detectionFlash = 0;
+            function resetToWorldCheckpoint() {
+                // Mantém mundo atual, volta para fase 1
+                currentPhaseInWorld = 1;
+                generateRoom(currentWorldIndex, currentPhaseInWorld);
+                gameState = STATE.PLAYING;
                 detectionMeter = 0;
-                audio.phaseCompleteSound();
-                spawnParticles(player.x, player.y, 45, '#ffd700', 75, 0.8, 2, -5);
-                spawnParticles(player.x, player.y, 30, '#ffffff', 55, 0.6, 1, -3);
-                spawnParticles(exitZone.x + exitZone.w / 2, exitZone.y + exitZone.h / 2, 25, '#4ecdc4', 50, 0.55, 2, -5);
+                detectionFlash = 0;
+                freezeTimer = 0;
+                winTimer = 0;
+                worldTransTimer = 0;
+                worldTransAlpha = 0;
+                gameOverTimer = 0;
+                shakeIntensity = 0;
+                shakeDuration = 0;
+                particles.length = 0;
+                if (player) player.trailPositions = [];
             }
 
-            function allItemsCollected() {
-                return items.every(it => it.collected);
+            function triggerWin() {
+                if (currentPhaseInWorld >= getWorldPhaseCount()) {
+                    if (currentWorldIndex < WORLDS.length - 1) {
+                        gameState = STATE.WORLD_TRANSITION;
+                        worldTransTimer = 2.5;
+                        worldTransAlpha = 0;
+                        safeAudio('worldUnlockSound');
+                        spawnParticles(player.x, player.y, 50, '#ffd700', 80, 1.0, 2.5, -5);
+                        spawnParticles(player.x, player.y, 35, '#ffffff', 60, 0.7, 1.5, -3);
+                    } else {
+                        gameState = STATE.WIN;
+                        winTimer = 2.0;
+                        safeAudio('victorySound');
+                        spawnParticles(player.x, player.y, 60, '#ffd700', 90, 1.2, 3, -5);
+                    }
+                } else {
+                    gameState = STATE.WIN;
+                    winTimer = 1.5;
+                    shakeIntensity = 3;
+                    shakeDuration = 0.45;
+                    detectionFlash = 0;
+                    detectionMeter = 0;
+                    safeAudio('phaseCompleteSound');
+                    spawnParticles(player.x, player.y, 45, '#ffd700', 75, 0.8, 2, -5);
+                    spawnParticles(player.x, player.y, 30, '#ffffff', 55, 0.6, 1, -3);
+                    spawnParticles(exitZone.x + exitZone.w / 2, exitZone.y + exitZone.h / 2, 25, '#4ecdc4', 50, 0.55, 2, -5);
+                }
             }
+
+            function allItemsCollected() { return items.every(it => it.collected); }
 
             // ============================================================
             // PLAYER UPDATE
             // ============================================================
             function updatePlayer(dt) {
-                if (!player || gameState !== STATE.PLAYING) return;
+                if (!player || (gameState !== STATE.PLAYING && gameState !== STATE.WORLD_TRANSITION)) return;
+                if (gameState === STATE.WORLD_TRANSITION) return;
                 const ix = (keys['KeyD'] || keys['ArrowRight'] ? 1 : 0) - (keys['KeyA'] || keys['ArrowLeft'] ? 1 : 0);
                 const iy = (keys['KeyS'] || keys['ArrowDown'] ? 1 : 0) - (keys['KeyW'] || keys['ArrowUp'] ? 1 : 0);
                 const im = Math.sqrt(ix * ix + iy * iy);
                 const ia = im > 0.01 ? Math.atan2(iy, ix) : player.facingAngle;
                 player.isRunning = shiftDown && im > 0.01;
+                const inBush = isPlayerInBush();
+                if (inBush && !player.camouflaged) {
+                    player.camouflaged = true;
+                    safeAudio('camouflageSound');
+                    spawnParticles(player.x, player.y, 6, '#88cc88', 20, 0.35, 1.2, -3);
+                } else if (!inBush && player.camouflaged) {
+                    player.camouflaged = false;
+                }
+                if (player.camouflaged && player.isRunning) {
+                    player.camouflaged = false;
+                    spawnParticles(player.x, player.y, 4, '#aaddaa', 25, 0.3, 1, -2);
+                }
                 const maxSpd = player.isRunning ? 118 : 64;
                 const acc = player.isRunning ? 580 : 400;
                 const dec = player.isRunning ? 500 : 360;
@@ -1161,11 +1347,10 @@
                     player.footstepTimer -= dt;
                     if (player.footstepTimer <= 0) {
                         player.footstepTimer = intv * (0.8 + Math.random() * 0.4);
-                        audio.footstep(player.isRunning);
-                        if (player.isRunning) spawnParticles(player.x, player.y + player.h / 2, 2, '#8888aa', 16, 0.22, 1,
-                            10);
-                        else if (player.speed > 15) spawnParticles(player.x, player.y + player.h / 2, 1, '#666680', 10, 0.15,
-                            0.8, 5);
+                        if (!player.camouflaged) safeAudio('footstep', player.isRunning);
+                        else { safeAudio('play', 60, 'sine', 0.06, 0.08); }
+                        if (player.isRunning && !player.camouflaged) spawnParticles(player.x, player.y + player.h / 2, 2,
+                            '#8888aa', 16, 0.22, 1, 10);
                     }
                 } else player.footstepTimer = Math.min(player.footstepTimer, 0.06);
                 if (player.speed > 18 || Math.abs(player.residualVx) > 3 || Math.abs(player.residualVy) > 3) {
@@ -1174,34 +1359,35 @@
                 }
                 for (const t of player.trailPositions) t.life -= dt;
                 player.trailPositions = player.trailPositions.filter(t => t.life > 0);
-                // Coleta de itens
                 for (const it of items) {
                     if (!it.collected && Math.hypot(player.x - it.x, player.y - it.y) < it.size + player.w / 2 + 3) {
                         it.collected = true;
-                        audio.pickupSound();
+                        safeAudio('pickupSound');
                         spawnParticles(it.x, it.y, 20, '#ffd700', 55, 0.6, 2, -8);
                         spawnParticles(it.x, it.y, 12, '#ffffff', 40, 0.4, 1, -5);
                     }
                 }
-                // Verificar saída
                 if (allItemsCollected() && exitZone) {
                     const ex = exitZone.x + exitZone.w / 2,
                         ey = exitZone.y + exitZone.h / 2;
                     if (Math.hypot(player.x - ex, player.y - ey) < exitZone.w / 2 + player.w / 2 + 5) triggerWin();
                 }
-                // Verificar captura física
                 checkPhysicalCapture();
             }
 
             function restartGame() {
-                currentPhase = 1;
-                generateRoom(currentPhase);
+                currentWorldIndex = 0;
+                currentPhaseInWorld = 1;
+                lives = MAX_LIVES;
+                generateRoom(currentWorldIndex, currentPhaseInWorld);
                 gameState = STATE.PLAYING;
                 detectionMeter = 0;
                 detectionFlash = 0;
                 freezeTimer = 0;
                 winTimer = 0;
-                caughtTimer = 0;
+                worldTransTimer = 0;
+                worldTransAlpha = 0;
+                gameOverTimer = 0;
                 shakeIntensity = 0;
                 shakeDuration = 0;
                 particles.length = 0;
@@ -1209,14 +1395,38 @@
             }
 
             function nextPhase() {
-                currentPhase++;
-                generateRoom(currentPhase);
+                currentPhaseInWorld++;
+                if (currentPhaseInWorld > getWorldPhaseCount()) {
+                    currentPhaseInWorld = getWorldPhaseCount();
+                }
+                generateRoom(currentWorldIndex, currentPhaseInWorld);
                 gameState = STATE.PLAYING;
                 detectionMeter = 0;
                 detectionFlash = 0;
                 freezeTimer = 0;
                 winTimer = 0;
-                caughtTimer = 0;
+                worldTransTimer = 0;
+                worldTransAlpha = 0;
+                gameOverTimer = 0;
+                shakeIntensity = 0;
+                shakeDuration = 0;
+                particles.length = 0;
+                if (player) player.trailPositions = [];
+            }
+
+            function advanceWorld() {
+                currentWorldIndex++;
+                currentPhaseInWorld = 1;
+                lives = MAX_LIVES; // Restaura vidas ao mudar de mundo
+                generateRoom(currentWorldIndex, currentPhaseInWorld);
+                gameState = STATE.PLAYING;
+                detectionMeter = 0;
+                detectionFlash = 0;
+                freezeTimer = 0;
+                winTimer = 0;
+                worldTransTimer = 0;
+                worldTransAlpha = 0;
+                gameOverTimer = 0;
                 shakeIntensity = 0;
                 shakeDuration = 0;
                 particles.length = 0;
@@ -1240,11 +1450,18 @@
                 } else { screenShakeX = 0;
                     screenShakeY = 0; }
                 if (detectionFlash > 0) detectionFlash = Math.max(0, detectionFlash - cd * 2.8);
-                if (freezeTimer > 0) {
-                    freezeTimer -= cd;
-                    if (freezeTimer <= 0 && gameState === STATE.CAUGHT) audio.caughtSound();
-                }
+                if (freezeTimer > 0) { freezeTimer -= cd; if (freezeTimer <= 0 && gameState === STATE.CAUGHT) applyDeathPenalty
+                    (); }
                 if (winTimer > 0) winTimer -= cd;
+                if (worldTransTimer > 0) {
+                    worldTransTimer -= cd;
+                    worldTransAlpha = Math.min(1, worldTransAlpha + cd * 1.2);
+                    if (worldTransTimer <= 0) advanceWorld();
+                }
+                if (gameOverTimer > 0) {
+                    gameOverTimer -= cd;
+                    if (gameOverTimer <= 0) restartGame();
+                }
                 for (const p of particles) p.update(cd);
                 for (let i = particles.length - 1; i >= 0; i--) { if (!particles[i].alive) particles.splice(i, 1); }
                 if (gameState === STATE.PLAYING) {
@@ -1254,9 +1471,27 @@
                 }
                 for (const it of items) { if (!it.collected) it.glowPhase += cd * 3.5; }
                 titlePulse += cd * 2.5;
-                if (gameState === STATE.CAUGHT && freezeTimer <= 0) { if (spacePressed || rPressed || keys['KeyR'])
-                        restartGame(); }
-                if (gameState === STATE.WIN && winTimer <= 0.3) { if (spacePressed || rPressed || keys['KeyR']) nextPhase(); }
+                // Input pós-captura ou game over
+                if (gameState === STATE.CAUGHT && freezeTimer <= 0) {
+                    if (spacePressed || rPressed || keys['KeyR']) {
+                        // Já teve penalidade aplicada em applyDeathPenalty, aqui apenas prossegue
+                        if (lives > 0) {
+                            // Reiniciar checkpoint já foi feito em applyDeathPenalty, nada a fazer
+                        } else {
+                            restartGame();
+                        }
+                    }
+                }
+                if (gameState === STATE.GAME_OVER && gameOverTimer <= 0) {
+                    if (spacePressed || rPressed || keys['KeyR']) restartGame();
+                }
+                if (gameState === STATE.WIN && winTimer <= 0.3) {
+                    if (spacePressed || rPressed || keys['KeyR']) {
+                        if (currentWorldIndex >= WORLDS.length - 1 && currentPhaseInWorld >= getWorldPhaseCount())
+                            restartGame();
+                        else nextPhase();
+                    }
+                }
                 spacePressed = false;
                 rPressed = false;
             }
@@ -1264,33 +1499,43 @@
             // ============================================================
             // RENDER
             // ============================================================
-            function drawPixelRect(x, y, w, h, color) { ctx.fillStyle = color;
-                ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(w), Math.floor(h)); }
-
             function render() {
+                const world = getCurrentWorld();
                 ctx.clearRect(0, 0, GAME_W, GAME_H);
-                ctx.fillStyle = '#0d0d1a';
+                ctx.fillStyle = world.floorColor1;
                 ctx.fillRect(0, 0, GAME_W, GAME_H);
-                ctx.fillStyle = '#121223';
+                ctx.fillStyle = world.floorColor2;
                 for (let gx = TILE; gx < GAME_W - TILE; gx += TILE * 2)
                     for (let gy = TILE; gy < GAME_H - TILE; gy += TILE * 2)
                         if ((Math.floor(gx / TILE) + Math.floor(gy / TILE)) % 2 === 0) ctx.fillRect(gx, gy, TILE, TILE);
                 const vg = ctx.createRadialGradient(GAME_W / 2, GAME_H / 2, GAME_W * 0.35, GAME_W / 2, GAME_H / 2, GAME_W * 0.85);
                 vg.addColorStop(0, 'rgba(0,0,0,0)');
-                vg.addColorStop(1, 'rgba(0,0,0,0.45)');
+                vg.addColorStop(1, world.ambientLight);
                 ctx.fillStyle = vg;
                 ctx.fillRect(0, 0, GAME_W, GAME_H);
-                const wc = '#22223a',
-                    we = '#2e2e4a';
                 const wr = [roomWalls.left, roomWalls.right, roomWalls.top, roomWalls.bottom];
                 for (const w of wr) {
-                    ctx.fillStyle = wc;
+                    ctx.fillStyle = world.wallFill;
                     ctx.fillRect(w.x, w.y, w.w, w.h);
-                    ctx.fillStyle = we;
+                    ctx.fillStyle = world.wallEdge;
                     if (w === roomWalls.left) ctx.fillRect(w.x + w.w - 2, w.y + 2, 2, w.h - 4);
                     if (w === roomWalls.right) ctx.fillRect(w.x, w.y + 2, 2, w.h - 4);
                     if (w === roomWalls.top) ctx.fillRect(w.x + 2, w.y + w.h - 2, w.w - 4, 2);
                     if (w === roomWalls.bottom) ctx.fillRect(w.x + 2, w.y, w.w - 4, 2);
+                }
+                for (const b of bushes) {
+                    const bushAlpha = player && player.camouflaged && pointInRect(player.x, player.y, b, 2) ? 0.7 : 0.55;
+                    ctx.fillStyle = `rgba(30,50,22,${bushAlpha})`;
+                    ctx.fillRect(b.x, b.y, b.w, b.h);
+                    ctx.fillStyle = `rgba(50,80,38,${bushAlpha * 0.7})`;
+                    ctx.fillRect(b.x + 1, b.y + 1, b.w - 2, b.h - 2);
+                    ctx.fillStyle = `rgba(70,100,50,${bushAlpha * 0.5})`;
+                    const dotCount = Math.floor(b.w * b.h / 18);
+                    for (let i = 0; i < dotCount; i++) {
+                        const dx = 2 + Math.random() * (b.w - 4);
+                        const dy = 2 + Math.random() * (b.h - 4);
+                        ctx.fillRect(b.x + Math.floor(dx), b.y + Math.floor(dy), 2, 2);
+                    }
                 }
                 if (exitZone) {
                     const ex = exitZone.x,
@@ -1306,12 +1551,10 @@
                     ctx.fillRect(ex + 1, ey + 1, ew - 2, eh - 2);
                     if (allItemsCollected()) {
                         const ab = Math.sin(globalTime * 5) * 2;
-                        const ax = ex + ew / 2,
-                            ay = ey + eh / 2;
                         ctx.fillStyle = '#ffffff';
-                        ctx.fillRect(ax - 2, ay - 8 + ab, 4, 8);
-                        ctx.fillRect(ax - 5, ay - 3 + ab, 4, 3);
-                        ctx.fillRect(ax + 1, ay - 3 + ab, 4, 3);
+                        ctx.fillRect(ex + ew / 2 - 2, ey + eh / 2 - 8 + ab, 4, 8);
+                        ctx.fillRect(ex + ew / 2 - 5, ey + eh / 2 - 3 + ab, 4, 3);
+                        ctx.fillRect(ex + ew / 2 + 1, ey + eh / 2 - 3 + ab, 4, 3);
                     }
                 }
                 for (const obs of obstacles) {
@@ -1333,6 +1576,8 @@
                     const px = Math.floor(player.x),
                         py = Math.floor(player.y);
                     const hb = Math.sin(player.headBobPhase) * (player.isRunning ? 1.5 : 0.8);
+                    const pa = player.camouflaged ? 0.55 : 1.0;
+                    ctx.globalAlpha = pa;
                     ctx.fillStyle = 'rgba(0,0,0,0.45)';
                     ctx.fillRect(px - player.w / 2 + 2, py - player.h / 2 + 2, player.w, player.h);
                     ctx.fillStyle = '#d0d0e0';
@@ -1345,9 +1590,19 @@
                         ctx.fillStyle = 'rgba(255,255,255,0.55)';
                         ctx.fillRect(px - 4, py + player.h / 2 + 2, 8, 1);
                     }
+                    ctx.globalAlpha = 1.0;
                     for (const t of player.trailPositions) {
-                        ctx.fillStyle = `rgba(200,200,220,${t.life / 0.2 * 0.25})`;
+                        ctx.fillStyle = `rgba(200,200,220,${t.life / 0.2 * 0.25 * pa})`;
                         ctx.fillRect(Math.floor(t.x - 2), Math.floor(t.y - 2), 4, 4);
+                    }
+                    if (player.camouflaged) {
+                        ctx.fillStyle = 'rgba(100,180,100,0.4)';
+                        ctx.fillRect(px - 7, py - 8, 14, 16);
+                        ctx.font = '8px "Courier New", monospace';
+                        ctx.fillStyle = '#aaddaa';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('OCULTO', px, py - 10);
+                        ctx.textAlign = 'start';
                     }
                 }
                 for (const it of items) {
@@ -1420,9 +1675,9 @@
                     ctx.lineWidth = 1;
                     ctx.fillStyle = 'rgba(0,0,0,0.45)';
                     ctx.fillRect(gx - guard.w / 2 + 1, gy - guard.h / 2 + 1, guard.w, guard.h);
-                    const bc = { patrol: '#d04040', suspicious: '#e05535', investigate: '#f06030', chase: '#ff2020',
-                        search: '#e84830' };
-                    ctx.fillStyle = bc[guard.state] || '#d04040';
+                    const bc = { patrol: world.guardColorBase, suspicious: '#e05535', investigate: '#f06030',
+                        chase: '#ff2020', search: '#e84830' };
+                    ctx.fillStyle = bc[guard.state] || world.guardColorBase;
                     ctx.fillRect(gx - guard.w / 2, gy - guard.h / 2, guard.w, guard.h);
                     ctx.fillStyle = guard.state === 'chase' ? '#ff3333' : '#e04848';
                     ctx.fillRect(gx - 2, gy - guard.h / 2 - 3, 5, 4);
@@ -1431,18 +1686,16 @@
                     ctx.fillStyle = '#ffff44';
                     ctx.fillRect(gx + Math.cos(guard.facingAngle), gy - guard.h / 2 - 1, 2, 2);
                     if (guard.state === 'suspicious') {
-                        const qb = Math.sin(globalTime * 6);
                         ctx.fillStyle = '#ffcc66';
                         ctx.font = 'bold 9px "Courier New", monospace';
                         ctx.textAlign = 'center';
-                        ctx.fillText('?', gx, gy - guard.h / 2 - 9 + qb);
+                        ctx.fillText('?', gx, gy - guard.h / 2 - 9 + Math.sin(globalTime * 6));
                         ctx.textAlign = 'start';
                     } else if (guard.state === 'chase') {
-                        const eb = Math.sin(globalTime * 14) * 2;
                         ctx.fillStyle = '#ff1111';
                         ctx.font = 'bold 11px "Courier New", monospace';
                         ctx.textAlign = 'center';
-                        ctx.fillText('!', gx, gy - guard.h / 2 - 11 + eb);
+                        ctx.fillText('!', gx, gy - guard.h / 2 - 11 + Math.sin(globalTime * 14) * 2);
                         ctx.textAlign = 'start';
                     }
                 }
@@ -1469,13 +1722,23 @@
                     ctx.fillStyle = 'rgba(20,3,3,0.75)';
                     ctx.fillRect(0, 0, GAME_W, GAME_H);
                 }
+                if (gameState === STATE.GAME_OVER) {
+                    ctx.fillStyle = 'rgba(10,0,0,0.8)';
+                    ctx.fillRect(0, 0, GAME_W, GAME_H);
+                }
+                if (gameState === STATE.WORLD_TRANSITION) {
+                    ctx.fillStyle = `rgba(0,0,0,${worldTransAlpha * 0.7})`;
+                    ctx.fillRect(0, 0, GAME_W, GAME_H);
+                }
                 mainCtx.clearRect(0, 0, CANVAS_W, CANVAS_H);
                 mainCtx.imageSmoothingEnabled = false;
                 mainCtx.drawImage(offscreen, Math.round(screenShakeX), Math.round(screenShakeY), CANVAS_W, CANVAS_H);
                 mainCtx.imageSmoothingEnabled = false;
                 if (gameState === STATE.TITLE) renderTitleScreen();
                 if (gameState === STATE.CAUGHT && freezeTimer <= 0) renderCaughtScreen();
+                if (gameState === STATE.GAME_OVER) renderGameOverScreen();
                 if (gameState === STATE.WIN && winTimer <= 0.7) renderWinScreen();
+                if (gameState === STATE.WORLD_TRANSITION) renderWorldTransitionScreen();
                 if (gameState === STATE.PLAYING) renderHUD();
             }
 
@@ -1488,21 +1751,22 @@
                 mainCtx.fillRect(0, 0, CANVAS_W, CANVAS_H);
                 mainCtx.fillStyle = '#e8e8f8';
                 mainCtx.font = 'bold 28px "Courier New", monospace';
-                mainCtx.fillText('STEALTH ROOM', cx, cy - 38 + Math.sin(titlePulse) * 3);
+                mainCtx.fillText('STEALTH ROOM', cx, cy - 45 + Math.sin(titlePulse) * 3);
                 mainCtx.fillStyle = '#8888aa';
                 mainCtx.font = '11px "Courier New", monospace';
-                mainCtx.fillText('UM JOGO DE FURTIVIDADE', cx, cy + 0);
+                mainCtx.fillText('UM JOGO DE FURTIVIDADE', cx, cy - 8);
+                mainCtx.fillText('5 MUNDOS • 25 FASES', cx, cy + 8);
                 mainCtx.fillStyle = '#aaaacc';
                 mainCtx.font = '10px "Courier New", monospace';
-                mainCtx.fillText('WASD = MOVER     SHIFT = CORRER', cx, cy + 33);
-                mainCtx.fillText('COLETE TODOS OS ITENS E FUJA', cx, cy + 50);
+                mainCtx.fillText('WASD = MOVER     SHIFT = CORRER', cx, cy + 30);
+                mainCtx.fillText('COLETE TODOS OS ITENS E FUJA', cx, cy + 46);
                 if (Math.sin(titlePulse * 1.4) > -0.2) {
                     mainCtx.fillStyle = '#ffd700';
                     mainCtx.font = 'bold 14px "Courier New", monospace';
-                    mainCtx.fillText('PRESSIONE ESPAÇO', cx, cy + 78);
+                    mainCtx.fillText('PRESSIONE ESPAÇO', cx, cy + 74);
                 }
                 mainCtx.fillStyle = '#2d2d48';
-                mainCtx.fillRect(cx - 80, cy + 63, 160, 1);
+                mainCtx.fillRect(cx - 80, cy + 60, 160, 1);
             }
 
             function renderCaughtScreen() {
@@ -1510,12 +1774,38 @@
                     cy = CANVAS_H / 2;
                 mainCtx.textAlign = 'center';
                 mainCtx.textBaseline = 'middle';
-                mainCtx.fillStyle = '#ff2222';
-                mainCtx.font = 'bold 24px "Courier New", monospace';
-                mainCtx.fillText('CAPTURADO!', cx, cy - 12);
+                if (lives > 0) {
+                    mainCtx.fillStyle = '#ff4444';
+                    mainCtx.font = 'bold 20px "Courier New", monospace';
+                    mainCtx.fillText('CAPTURADO!', cx, cy - 18);
+                    mainCtx.fillStyle = '#ffaa66';
+                    mainCtx.font = '13px "Courier New", monospace';
+                    mainCtx.fillText('1 VIDA PERDIDA', cx, cy + 4);
+                    mainCtx.fillStyle = '#cc8888';
+                    mainCtx.font = '10px "Courier New", monospace';
+                    mainCtx.fillText('VIDAS RESTANTES: ' + '♥'.repeat(lives), cx, cy + 22);
+                    if (Math.sin(globalTime * 3) > -0.3) mainCtx.fillText('ESPAÇO OU R = CONTINUAR', cx, cy + 40);
+                } else {
+                    // Esta tela não deve ser alcançada, pois vidas == 0 leva a GAME_OVER, mas por segurança
+                    mainCtx.fillStyle = '#ff2222';
+                    mainCtx.font = 'bold 24px "Courier New", monospace';
+                    mainCtx.fillText('GAME OVER', cx, cy - 10);
+                    if (Math.sin(globalTime * 3) > -0.3) mainCtx.fillText('ESPAÇO OU R = RECOMEÇAR', cx, cy + 20);
+                }
+            }
+
+            function renderGameOverScreen() {
+                const cx = CANVAS_W / 2,
+                    cy = CANVAS_H / 2;
+                mainCtx.textAlign = 'center';
+                mainCtx.textBaseline = 'middle';
+                mainCtx.fillStyle = '#ff0000';
+                mainCtx.font = 'bold 28px "Courier New", monospace';
+                mainCtx.fillText('GAME OVER', cx, cy - 15);
                 mainCtx.fillStyle = '#cc8888';
                 mainCtx.font = '11px "Courier New", monospace';
-                if (Math.sin(globalTime * 3) > -0.3) mainCtx.fillText('ESPAÇO OU R = REINICIAR', cx, cy + 20);
+                mainCtx.fillText('TODAS AS VIDAS SE ESGOTARAM', cx, cy + 10);
+                if (Math.sin(globalTime * 3) > -0.3) mainCtx.fillText('ESPAÇO OU R = RECOMEÇAR JORNADA', cx, cy + 30);
             }
 
             function renderWinScreen() {
@@ -1523,15 +1813,54 @@
                     cy = CANVAS_H / 2;
                 mainCtx.textAlign = 'center';
                 mainCtx.textBaseline = 'middle';
+                const world = getCurrentWorld();
                 mainCtx.fillStyle = '#ffd700';
-                mainCtx.font = 'bold 20px "Courier New", monospace';
-                mainCtx.fillText('FASE ' + currentPhase + ' CONCLUÍDA!', cx, cy - 6);
+                mainCtx.font = 'bold 18px "Courier New", monospace';
+                mainCtx.fillText('FASE ' + currentPhaseInWorld + '/' + world.totalPhases + ' CONCLUÍDA!', cx, cy - 6);
                 mainCtx.fillStyle = '#aaccaa';
                 mainCtx.font = '10px "Courier New", monospace';
                 if (Math.sin(globalTime * 3) > -0.3) mainCtx.fillText('ESPAÇO OU R = PRÓXIMA FASE', cx, cy + 18);
             }
 
+            function renderWorldTransitionScreen() {
+                const cx = CANVAS_W / 2,
+                    cy = CANVAS_H / 2;
+                mainCtx.textAlign = 'center';
+                mainCtx.textBaseline = 'middle';
+                const nextWorld = WORLDS[Math.min(currentWorldIndex + 1, WORLDS.length - 1)];
+                mainCtx.fillStyle = `rgba(0,0,0,${worldTransAlpha})`;
+                mainCtx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+                if (worldTransAlpha > 0.4) {
+                    mainCtx.fillStyle = '#ffd700';
+                    mainCtx.font = 'bold 16px "Courier New", monospace';
+                    mainCtx.fillText('NOVO MUNDO DESBLOQUEADO!', cx, cy - 20);
+                    mainCtx.fillStyle = '#ffffff';
+                    mainCtx.font = 'bold 20px "Courier New", monospace';
+                    mainCtx.fillText(nextWorld.name, cx, cy + 8);
+                    mainCtx.fillStyle = '#aaaacc';
+                    mainCtx.font = '12px "Courier New", monospace';
+                    mainCtx.fillText(nextWorld.subtitle, cx, cy + 30);
+                    mainCtx.fillStyle = '#88cc88';
+                    mainCtx.font = '10px "Courier New", monospace';
+                    mainCtx.fillText('VIDAS RESTAURADAS', cx, cy + 48);
+                }
+            }
+
             function renderHUD() {
+                const world = getCurrentWorld();
+                mainCtx.textAlign = 'left';
+                mainCtx.fillStyle = '#ffffff';
+                mainCtx.font = 'bold 9px "Courier New", monospace';
+                mainCtx.fillText(world.name, 14, 16);
+                mainCtx.fillStyle = '#aaaacc';
+                mainCtx.font = '8px "Courier New", monospace';
+                mainCtx.fillText('FASE ' + currentPhaseInWorld + '/' + world.totalPhases, 14, 28);
+                // Vidas
+                mainCtx.fillStyle = '#ff6666';
+                mainCtx.font = '9px "Courier New", monospace';
+                let hearts = '';
+                for (let i = 0; i < MAX_LIVES; i++) hearts += i < lives ? '♥' : '♡';
+                mainCtx.fillText('VIDAS: ' + hearts, 14, 40);
                 mainCtx.textAlign = 'right';
                 if (detectionMeter > 0.02) {
                     const bw = 60,
@@ -1555,24 +1884,26 @@
                     mainCtx.fillStyle = '#4ecdc4';
                     mainCtx.fillText('VA PARA A SAÍDA!', CANVAS_W - 14, 44);
                 }
+                if (player && player.camouflaged) {
+                    mainCtx.fillStyle = '#88cc88';
+                    mainCtx.font = 'bold 9px "Courier New", monospace';
+                    mainCtx.fillText('CAMUFLADO', CANVAS_W - 14, 56);
+                }
                 mainCtx.textAlign = 'left';
-                mainCtx.fillStyle = '#aaaacc';
-                mainCtx.font = '9px "Courier New", monospace';
-                mainCtx.fillText('FASE ' + currentPhase, 14, 16);
-                if (player && player.isRunning && player.speed > 20) {
+                if (player && player.isRunning && player.speed > 20 && !player.camouflaged) {
                     mainCtx.fillStyle = `rgba(255,180,60,${0.5 + Math.sin(globalTime * 10) * 0.3})`;
                     mainCtx.font = 'bold 9px "Courier New", monospace';
-                    mainCtx.fillText('⚠ BARULHO', 14, 30);
+                    mainCtx.fillText('⚠ BARULHO', 14, 54);
                 }
                 const chasingGuard = guards.find(g => g.state === 'chase');
                 if (chasingGuard) {
                     mainCtx.fillStyle = '#ff3333';
                     mainCtx.font = 'bold 9px "Courier New", monospace';
-                    mainCtx.fillText('!! PERSEGUIÇÃO', 14, 44);
+                    mainCtx.fillText('!! PERSEGUIÇÃO', 14, 66);
                 } else if (guards.some(g => g.state === 'investigate')) {
                     mainCtx.fillStyle = '#ff8844';
                     mainCtx.font = 'bold 9px "Courier New", monospace';
-                    mainCtx.fillText('! INVESTIGANDO', 14, 44);
+                    mainCtx.fillText('! INVESTIGANDO', 14, 66);
                 }
                 mainCtx.textAlign = 'start';
             }
@@ -1611,8 +1942,9 @@
                     audio.init();
                     audio.resume();
                     if (gameState === STATE.TITLE) restartGame();
-                    else if (gameState === STATE.CAUGHT && freezeTimer <= 0) restartGame();
-                    else if (gameState === STATE.WIN) nextPhase();
+                    else if (gameState === STATE.CAUGHT && freezeTimer <= 0) { /* tratado no update */ } else if (gameState ===
+                        STATE.GAME_OVER && gameOverTimer <= 0) restartGame();
+                    else if (gameState === STATE.WIN && winTimer <= 0.3) nextPhase();
                     e.preventDefault();
                 }
                 if (e.code === 'KeyR') { rPressed = true;
@@ -1632,27 +1964,33 @@
                 audio.init();
                 audio.resume();
                 if (gameState === STATE.TITLE) restartGame();
-                else if (gameState === STATE.CAUGHT && freezeTimer <= 0) restartGame();
-                else if (gameState === STATE.WIN) nextPhase();
+                else if (gameState === STATE.CAUGHT && freezeTimer <= 0) { /* tratado no update */ } else if (gameState ===
+                    STATE.GAME_OVER && gameOverTimer <= 0) restartGame();
+                else if (gameState === STATE.WIN && winTimer <= 0.3) nextPhase();
             });
             canvas.addEventListener('touchstart', (e) => {
                 e.preventDefault();
                 audio.init();
                 audio.resume();
                 if (gameState === STATE.TITLE) restartGame();
-                else if (gameState === STATE.CAUGHT && freezeTimer <= 0) restartGame();
-                else if (gameState === STATE.WIN) nextPhase();
+                else if (gameState === STATE.CAUGHT && freezeTimer <= 0) { /* tratado no update */ } else if (gameState ===
+                    STATE.GAME_OVER && gameOverTimer <= 0) restartGame();
+                else if (gameState === STATE.WIN && winTimer <= 0.3) nextPhase();
             });
 
             function init() {
-                currentPhase = 1;
-                generateRoom(currentPhase);
+                currentWorldIndex = 0;
+                currentPhaseInWorld = 1;
+                lives = MAX_LIVES;
+                generateRoom(currentWorldIndex, currentPhaseInWorld);
                 gameState = STATE.TITLE;
                 detectionMeter = 0;
                 detectionFlash = 0;
                 freezeTimer = 0;
                 winTimer = 0;
-                caughtTimer = 0;
+                worldTransTimer = 0;
+                worldTransAlpha = 0;
+                gameOverTimer = 0;
                 shakeIntensity = 0;
                 shakeDuration = 0;
                 screenShakeX = 0;
@@ -1663,10 +2001,10 @@
             }
             init();
             requestAnimationFrame(gameLoop);
-            console.log('%c🕵️ STEALTH ROOM v2.0 %cCAÇADA INTELIGENTE',
-                'color:#ff4444;font-size:18px;font-family:monospace;',
+            console.log('%c🕵️ STEALTH ROOM v3.1 %cCHECKPOINT + VIDAS',
+                'color:#ffd700;font-size:18px;font-family:monospace;',
                 'color:#4ecdc4;font-size:12px;');
-            console.log('%cWASD = Mover | SHIFT = Correr | Colete itens | Fuja do guarda!',
+            console.log('%cSistema de vidas e checkpoints integrado. Boa sorte!',
                 'color:#ccc;font-size:11px;font-family:monospace;');
         })();
     </script>
